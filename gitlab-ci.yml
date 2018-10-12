@@ -1,0 +1,100 @@
+image: gitlab.sproutloud.com:4567/sproutloud/docker-container/php70:latest
+before_script:
+  - curl -sS https://getcomposer.org/installer | php
+    #- php /builds/sl-api/slapi/composer.phar install
+
+stages:
+  - test
+  - build
+  - deploy
+
+# Test
+development_test:
+  stage: test
+  script:
+    - php `pwd`/composer.phar install
+    - vendor/bin/codecept run unit --steps --html
+    #- vendor/bin/codecept run unit --coverage-text --no-colors --coverage-html
+  tags:
+    - php70-api
+  except:
+    - master@sl-api/slapi
+    - production@sl-api/slapi
+#  artifacts:
+#    paths:
+#      - tests/_output/coverage
+#    expire_in: 1 day
+
+# Run a more thorough job, only on master
+master_test:
+  stage: test
+  script:
+    - php `pwd`/composer.phar install
+    - vendor/bin/codecept run unit --steps --html
+    #- vendor/bin/codecept run unit --coverage-text --no-colors --coverage-html
+  tags:
+    - php70-api
+  only:
+    - master@sl-api/slapi
+  artifacts:
+    paths:
+      - tests/_output/report.html
+        #- tests/_output/coverage
+    expire_in: 1 day
+
+pages:
+  stage: build
+  script:
+    #- mkdir public
+    #- mv tests/_output/coverage public
+    - mv `pwd`/tests/_output/report.html public/index.html
+  only:
+    - master@sl-api/slapi
+  dependencies:
+    - master_test
+  artifacts:
+    paths:
+      - public
+    expire_in: 1 day
+
+setup_ci:
+  stage: build
+  script:
+    - git clone git@gitlab.sproutloud.com:devops/ci.git builds/ci
+  only:
+    - master@sl-api/slapi
+    - production@sl-api/slapi
+  artifacts:
+    paths:
+      - builds/ci
+    expire_in: 1 day
+
+queue_jenkins:
+  stage: deploy
+  script:
+    - pwd
+    - whoami
+    - export MERGE_REQUEST_JSON=$(curl -s "https://gitlab.sproutloud.com/api/v4/projects/${CI_PROJECT_ID}/merge_requests?private_token={$OAUTH_TOKEN}&state=merged&per_page=50")
+    - php builds/ci/queue_jenkins.php
+  environment: master
+  only:
+    - master@sl-api/slapi
+  variables:
+    JENKINS_PROJECT: "slapi_master"
+    PHP_ENVIRONMENT: "STAGE"
+    DB_CREDENTIALS: ${STAGE_CREDENTIALS}
+
+queue_jenkins_production:
+  stage: deploy
+  script:
+    - pwd
+    - whoami
+    - export MERGE_REQUEST_JSON=$(curl -s "https://gitlab.sproutloud.com/api/v4/projects/${CI_PROJECT_ID}/merge_requests?private_token={$OAUTH_TOKEN}&state=merged&per_page=50")
+    - php builds/ci/queue_jenkins.php
+  environment: production
+  only:
+    - production@sl-api/slapi
+  variables:
+    JENKINS_PROJECT: "slapi_production"
+    PHP_ENVIRONMENT: "PROD"
+    DB_CREDENTIALS: ${PRODUCTION_CREDENTIALS}
